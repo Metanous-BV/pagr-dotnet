@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- NuGet package metadata -->
+  <PropertyGroup>
+    <PackageId>Pagr.Sdk</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Metanous</Authors>
+    <Company>Metanous</Company>
+    <Copyright>Copyright (c) 2026 Metanous</Copyright>
+    <Description>Official .NET client for the Pagr document-rendering API: templates, synchronous and fire-and-forget batch rendering, data validation, organisation stats, and webhook parsing.</Description>
+    <PackageTags>pagr;pdf;rendering;documents;templates;sdk</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Metanous-BV/pagr-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Metanous-BV/pagr-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Deterministic builds + symbols, so a later `dotnet nuget push` needs no csproj work -->
+  <PropertyGroup>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PrivateAssets="All" keeps SourceLink out of the consumer's dependency graph,
+         so the package stays dependency-free. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pagr.Sdk.Tests" />
+  </ItemGroup>
+
+</Project>

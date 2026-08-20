@@ -1,0 +1,15 @@
+root = true
+
+[*.cs]
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# Remove unused usings
+dotnet_diagnostic.IDE0005.severity = warning
+
+# Format on save settings (removes blank lines after removing usings)
+visual_studio_format_on_save_enabled = true
+visual_studio_remove_unnecessary_imports_on_save = true
+
+# Remove consecutive blank lines
+dotnet_style_allow_multiple_blank_lines_experimental = false

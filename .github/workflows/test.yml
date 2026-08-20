@@ -1,0 +1,33 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 10.0.x is required to parse the .slnx solution format (needs SDK 9.0.200+).
+      # 8.0.x is installed so the net8.0 tests run on their real target runtime
+      # rather than rolling forward.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore Pagr.Sdk.slnx
+
+      - name: Build
+        run: dotnet build Pagr.Sdk.slnx -c Release --no-restore -warnaserror
+
+      - name: Test
+        run: dotnet test Pagr.Sdk.slnx -c Release --no-build

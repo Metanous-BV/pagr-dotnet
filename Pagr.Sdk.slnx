@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Pagr.Sdk.Examples/Pagr.Sdk.Examples.csproj" />
+  <Project Path="Pagr.Sdk.SmokeTest/Pagr.Sdk.SmokeTest.csproj" />
+  <Project Path="Pagr.Sdk.Tests/Pagr.Sdk.Tests.csproj" />
+  <Project Path="Pagr.Sdk/Pagr.Sdk.csproj" />
+</Solution>

@@ -1,0 +1,16 @@
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+artifacts/
+*.nupkg
+*.snupkg
+.env
+TestResults/
+Pagr.Sdk.Examples/**/test_output/
+Pagr.Sdk.SmokeTest/**/test_output/

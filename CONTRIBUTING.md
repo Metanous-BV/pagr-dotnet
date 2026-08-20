@@ -18,8 +18,8 @@ build` cannot read the solution, that is why. The library itself targets
 `net8.0` and has no NuGet dependencies; `Microsoft.SourceLink.GitHub` is a
 build-time-only reference (`PrivateAssets="All"`) and never reaches consumers.
 
-The test, example and smoke-test projects set `<RollForward>Major</RollForward>`
-so they still run on a machine that has no .NET 8 runtime installed.
+The test and example projects set `<RollForward>Major</RollForward>` so they
+still run on a machine that has no .NET 8 runtime installed.
 
 ### Running tests
 
@@ -50,9 +50,9 @@ No live API is needed — the suite is fully self-contained.
 - Model tests should assert camelCase→PascalCase mapping, enum fail-open
   behaviour, and default handling.
 
-`Pagr.Sdk.SmokeTest` and `Pagr.Sdk.Examples` hit a **live** API and need a real
-API key. They are run manually only and are never part of an automated test run
-— CI builds them but does not execute them.
+`Pagr.Sdk.Examples` hits a **live** API and needs a real API key. The examples
+are run manually only and are never part of an automated test run — CI builds
+them but does not execute them.
 
 ## Build & release
 

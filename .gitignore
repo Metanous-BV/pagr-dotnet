@@ -13,4 +13,3 @@ artifacts/
 .env
 TestResults/
 Pagr.Sdk.Examples/**/test_output/
-Pagr.Sdk.SmokeTest/**/test_output/

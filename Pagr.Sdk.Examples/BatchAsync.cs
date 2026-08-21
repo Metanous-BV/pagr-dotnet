@@ -41,20 +41,13 @@ internal static class BatchAsync
         // more than once and out of order: dedupe on the X-Pagr-Delivery header and correlate
         // documents by DocumentIndex, not arrival order.
 
-        // Polling is a reliable alternative (or complement) to webhooks — or use
-        // client.WaitForJobAsync(job.JobId) for the same loop pre-written:
-        while (true)
-        {
-            var status = await client.GetJobStatusAsync(job.JobId);
-            Console.WriteLine($"  state={status.State} status={status.Status}: {status.RenderedCount} rendered");
-            if (status.Done)
-            {
-                Console.WriteLine(status.Ok
-                    ? $"Job completed at {status.CompletedAt}"
-                    : $"Job failed: {status.FailureReason}");
-                break;
-            }
-            await Task.Delay(TimeSpan.FromSeconds(1));
-        }
+        // Polling is a reliable alternative (or complement) to webhooks. WaitForJobAsync
+        // wraps GetJobStatusAsync in a poll loop bounded by a default 5-minute deadline
+        // (it throws PagrTimeoutException if that elapses), so it can never spin forever
+        // on a stuck job.
+        var status = await client.WaitForJobAsync(job.JobId);
+        Console.WriteLine(status.Ok
+            ? $"Job completed at {status.CompletedAt}"
+            : $"Job failed: {status.FailureReason}");
     }
 }

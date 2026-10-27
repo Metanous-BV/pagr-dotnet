@@ -62,7 +62,10 @@ public sealed class RenderDocument
     [JsonPropertyName("isPdfDeleted")]
     public bool IsPdfDeleted { get; init; }
 
-    /// <summary>The language variant the document was rendered in, if any.</summary>
+    /// <summary>
+    /// The language the document was rendered in: the requested language, or the version's
+    /// default language when the render named none. <see langword="null"/> when neither applied.
+    /// </summary>
     [JsonPropertyName("language")]
     public string? Language { get; init; }
 

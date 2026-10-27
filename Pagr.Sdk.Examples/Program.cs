@@ -6,7 +6,8 @@ var examples = new Dictionary<string, (string Description, Func<Task> Run)>(Stri
 {
     ["getting-started"] = ("Connect, pick a template, render a document, save the PDF.", GettingStarted.RunAsync),
     ["templates"] = ("Browse templates and versions: paging, search, filters, document-name template, preview image.", Templates.RunAsync),
-    ["render-single"] = ("Single render options: issues, language override, persist=false, JSON-string data.", RenderSingle.RunAsync),
+    ["template-authoring"] = ("Pick a project, create a template with content, edit a draft version, set its default language.", TemplateAuthoring.RunAsync),
+    ["render-single"] = ("Single render options: issues, picking a language, persist=false, JSON-string data.", RenderSingle.RunAsync),
     ["render-batch"] = ("Synchronous batch render: succeeded/failed items, SaveAllAsync.", RenderBatch.RunAsync),
     ["batch-async"] = ("Fire-and-forget batch render with webhook callbacks, plus job status polling.", BatchAsync.RunAsync),
     ["validate"] = ("Data validation: severity levels, per-document issues, test vs. production keys.", Validate.RunAsync),

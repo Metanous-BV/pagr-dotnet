@@ -114,6 +114,28 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="apiKey">The new API key.</param>
     public void SetApiKey(string apiKey) => _http.SetApiKey(apiKey);
 
+    // ── Projects ─────────────────────────────────────────────────────────────────
+
+    /// <summary>Lists the projects of the authenticated organisation.</summary>
+    /// <remarks>
+    /// Every organisation has at least one project. A project's <see cref="Project.Id"/> is what
+    /// <see cref="CreateTemplateAsync"/> and the project-scoped <c>GetTemplatesAsync</c> take.
+    /// Unlike the other lists, the server's default order is by name ascending; set
+    /// <see cref="ListOptions.SortBy"/> (<c>name</c>, <c>createdAt</c> or <c>updatedAt</c>) when
+    /// order matters.
+    /// </remarks>
+    /// <param name="options">Paging, sorting, filtering and search options. <see cref="ListOptions.Search"/> matches on name.</param>
+    /// <param name="cancellationToken">A token to cancel the request.</param>
+    /// <returns>A page of projects.</returns>
+    /// <exception cref="ArgumentException">A filter's field or operator is not valid for this endpoint.</exception>
+    public async Task<PagedResult<Project>> GetProjectsAsync(
+        ListOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        var response = await _http.GetAsync("v1/projects", options?.ToQuery(Filters.ProjectFilters), cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadJsonAsync<PagedResult<Project>>(response, cancellationToken).ConfigureAwait(false);
+    }
+
     // ── Templates ────────────────────────────────────────────────────────────────
 
     /// <summary>Lists templates available to the authenticated organisation.</summary>
@@ -151,6 +173,56 @@ public sealed class PagrApiClient : IDisposable
     public async Task<Template> GetTemplateAsync(Guid templateId, CancellationToken cancellationToken = default)
     {
         var response = await _http.GetAsync($"v1/templates/{templateId}", query: null, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadJsonAsync<Template>(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Creates a template in a project, optionally with content.</summary>
+    /// <remarks>
+    /// <para>
+    /// Version 1 is created as a <b>draft</b>. There is no publish endpoint: publish it in the
+    /// Pagr editor. A version cannot be published without a default language, so pass
+    /// <paramref name="defaultLanguage"/> here or set it later with
+    /// <see cref="UpdateDefaultLanguageAsync"/>.
+    /// </para>
+    /// <para>
+    /// <paramref name="template"/>, <paramref name="data"/> and <paramref name="translations"/>
+    /// are sent as JSON objects. Each accepts a <see cref="JsonElement"/>, a
+    /// <see cref="System.Text.Json.Nodes.JsonNode"/>, a JSON string (parsed client-side), or any
+    /// serialisable object (POCO, anonymous type, dictionary). Any of them left
+    /// <see langword="null"/> gets the starter content; leaving out
+    /// <paramref name="translations"/> means the version has none. The request is atomic: when
+    /// it fails, nothing is created.
+    /// </para>
+    /// </remarks>
+    /// <param name="projectId">The project to create the template in; get it from <see cref="GetProjectsAsync"/>.</param>
+    /// <param name="name">The template's display name.</param>
+    /// <param name="masterTemplateId">The master template to derive from, if any.</param>
+    /// <param name="template">The template definition (the DSL document), as a JSON object.</param>
+    /// <param name="data">The version's sample data, as a JSON object.</param>
+    /// <param name="translations">The translations, keyed by language, as a JSON object.</param>
+    /// <param name="defaultLanguage">
+    /// The language the authored text is written in, e.g. <c>"nl"</c> or <c>"nl-BE"</c>. Read
+    /// the canonical value back from the version; the API trims and canonicalises it.
+    /// </param>
+    /// <param name="cancellationToken">A token to cancel the request.</param>
+    /// <returns>The created template.</returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="name"/> is blank, or a content argument is not (or does not parse to) a JSON object.
+    /// </exception>
+    public async Task<Template> CreateTemplateAsync(
+        Guid projectId, string name, Guid? masterTemplateId = null,
+        object? template = null, object? data = null, object? translations = null,
+        string? defaultLanguage = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        var body = new Dictionary<string, object?> { ["name"] = name };
+        if (masterTemplateId is not null)
+            body["masterTemplateId"] = masterTemplateId;
+        AddContent(body, template, data, translations, defaultLanguage);
+
+        var response = await _http.PostAsync($"v1/projects/{projectId}/templates", body, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         return await ReadJsonAsync<Template>(response, cancellationToken).ConfigureAwait(false);
     }
@@ -202,6 +274,78 @@ public sealed class PagrApiClient : IDisposable
         return await ReadJsonAsync<TemplateVersion>(response, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Updates a version's content: its template definition, sample data, translations and/or default language.</summary>
+    /// <remarks>
+    /// <para>
+    /// Every argument is optional, but at least one must be set. An argument left
+    /// <see langword="null"/> is omitted from the request and keeps its stored value — so this
+    /// method cannot clear the default language; use <see cref="UpdateDefaultLanguageAsync"/>
+    /// for that. To clear translations, pass an empty object (e.g. <c>new { }</c> or
+    /// <c>"{}"</c>). The content arguments accept the same forms as
+    /// <see cref="CreateTemplateAsync"/>.
+    /// </para>
+    /// <para>
+    /// The request is atomic: if any field is refused, nothing is written. On a
+    /// <b>published</b> version <paramref name="data"/> is refused, <paramref name="template"/>
+    /// must still bind cleanly against the data the version was published with, and
+    /// <paramref name="defaultLanguage"/> can only be set while the version has none. A refusal
+    /// surfaces as a <see cref="PagrApiException"/> carrying the API error code.
+    /// </para>
+    /// </remarks>
+    /// <param name="templateId">The template.</param>
+    /// <param name="versionNumber">The version to update.</param>
+    /// <param name="template">The new template definition, as a JSON object.</param>
+    /// <param name="data">The new sample data, as a JSON object (drafts only).</param>
+    /// <param name="translations">The new translations, keyed by language, as a JSON object.</param>
+    /// <param name="defaultLanguage">The language the authored text is written in, e.g. <c>"nl"</c> or <c>"nl-BE"</c>.</param>
+    /// <param name="cancellationToken">A token to cancel the request.</param>
+    /// <returns>The updated version.</returns>
+    /// <exception cref="ArgumentException">
+    /// No argument is set, or a content argument is not (or does not parse to) a JSON object.
+    /// </exception>
+    public async Task<TemplateVersion> UpdateTemplateVersionAsync(
+        Guid templateId, int versionNumber,
+        object? template = null, object? data = null, object? translations = null,
+        string? defaultLanguage = null, CancellationToken cancellationToken = default)
+    {
+        var body = new Dictionary<string, object?>();
+        AddContent(body, template, data, translations, defaultLanguage);
+        if (body.Count == 0)
+            throw new ArgumentException(
+                "Nothing to update: set at least one of template, data, translations or defaultLanguage.");
+
+        var response = await _http.PatchAsync(
+                $"v1/templates/{templateId}/versions/{versionNumber}", body, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadJsonAsync<TemplateVersion>(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Sets (or clears, with <see langword="null"/>) a version's default language.</summary>
+    /// <remarks>
+    /// Any known culture name is accepted — a language (<c>nl</c>) or a language plus region
+    /// (<c>nl-BE</c>). The API trims and canonicalises it (<c>" NL-be "</c> is stored as
+    /// <c>"nl-BE"</c>), so read the stored value from the returned
+    /// <see cref="TemplateVersion.DefaultLanguage"/>. Clearing works on drafts only; on a
+    /// published version the value can only be set while it is <see langword="null"/> (sending
+    /// the current value is a no-op). Changing it afterwards is refused — duplicate the version
+    /// instead.
+    /// </remarks>
+    /// <param name="templateId">The template.</param>
+    /// <param name="versionNumber">The version to update.</param>
+    /// <param name="defaultLanguage">The new default language, or <see langword="null"/> to clear it.</param>
+    /// <param name="cancellationToken">A token to cancel the request.</param>
+    /// <returns>The updated version.</returns>
+    public async Task<TemplateVersion> UpdateDefaultLanguageAsync(
+        Guid templateId, int versionNumber, string? defaultLanguage,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await _http.PatchAsync(
+                $"v1/templates/{templateId}/versions/{versionNumber}/default-language",
+                new { defaultLanguage }, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadJsonAsync<TemplateVersion>(response, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Returns the URL of a version's preview image, if any.</summary>
     /// <param name="templateId">The template.</param>
     /// <param name="versionNumber">The version to fetch the preview image for.</param>
@@ -223,7 +367,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="jsonData">The document data as a JSON string.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> (default) for the latest published version.</param>
     /// <param name="includeDocument">Whether to return the rendered bytes inline (Base64).</param>
-    /// <param name="language">Language variant to render (for multilingual templates).</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">
     /// When <see langword="false"/> the render is not stored server-side; the document's
     /// <see cref="RenderedDocument.Id"/> and <see cref="RenderedDocument.ViewUrl"/> are then
@@ -244,7 +392,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="data">The document data.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> (default) for the latest published version.</param>
     /// <param name="includeDocument">Whether to return the rendered bytes inline (Base64).</param>
-    /// <param name="language">Language variant to render (for multilingual templates).</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the render is not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -260,7 +412,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="data">The document data.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> (default) for the latest published version.</param>
     /// <param name="includeDocument">Whether to return the rendered bytes inline (Base64).</param>
-    /// <param name="language">Language variant to render (for multilingual templates).</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the render is not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -293,7 +449,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="templateId">The template to render.</param>
     /// <param name="jsonData">The document data as a JSON string.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> (default) for the latest published version.</param>
-    /// <param name="language">Language variant to render (for multilingual templates).</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">
     /// When <see langword="true"/> (default) the render is stored server-side and the
     /// document's <see cref="PdfDocument.DocumentId"/>/<see cref="PdfDocument.ViewUrl"/> are
@@ -314,7 +474,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="templateId">The template to render.</param>
     /// <param name="data">The document data.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> (default) for the latest published version.</param>
-    /// <param name="language">Language variant to render (for multilingual templates).</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the render is not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -334,7 +498,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="templateId">The template to render.</param>
     /// <param name="data">The document data.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> (default) for the latest published version.</param>
-    /// <param name="language">Language variant to render (for multilingual templates).</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the render is not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -350,7 +518,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="jsonDataSets">The document data sets, each a JSON string.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> for the latest.</param>
     /// <param name="includeDocument">Whether to return the rendered bytes inline (Base64).</param>
-    /// <param name="language">Language variant to render.</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the renders are not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -369,7 +541,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="dataSets">The document data sets.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> for the latest.</param>
     /// <param name="includeDocument">Whether to return the rendered bytes inline (Base64).</param>
-    /// <param name="language">Language variant to render.</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the renders are not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -388,7 +564,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="dataSets">The document data sets.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> for the latest.</param>
     /// <param name="includeDocument">Whether to return the rendered bytes inline (Base64).</param>
-    /// <param name="language">Language variant to render.</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">When <see langword="false"/> the renders are not stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -413,7 +593,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="callbackUrl">A publicly reachable URL the server POSTs webhooks to.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> for the latest.</param>
     /// <param name="includeDocument">Whether webhooks include the rendered bytes inline.</param>
-    /// <param name="language">Language variant to render.</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">Whether the renders are stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -431,7 +615,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="callbackUrl">A publicly reachable URL the server POSTs webhooks to.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> for the latest.</param>
     /// <param name="includeDocument">Whether webhooks include the rendered bytes inline.</param>
-    /// <param name="language">Language variant to render.</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">Whether the renders are stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -449,7 +637,11 @@ public sealed class PagrApiClient : IDisposable
     /// <param name="callbackUrl">A publicly reachable URL the server POSTs webhooks to.</param>
     /// <param name="version">A specific version number, or <see langword="null"/> for the latest.</param>
     /// <param name="includeDocument">Whether webhooks include the rendered bytes inline.</param>
-    /// <param name="language">Language variant to render.</param>
+    /// <param name="language">
+    /// Language to render in; must be one of the version's <see cref="TemplateVersion.AvailableLanguages"/>
+    /// (matched exactly). <see langword="null"/> (default) renders in the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>.
+    /// </param>
     /// <param name="persist">Whether the renders are stored server-side.</param>
     /// <param name="timeout">Per-request timeout override; <see langword="null"/> uses the client's configured default.</param>
     /// <param name="cancellationToken">A token to cancel the request.</param>
@@ -793,6 +985,45 @@ public sealed class PagrApiClient : IDisposable
         string json => ToPayload(json),
         _ => JsonSerializer.SerializeToElement(data, PayloadOptions),
     };
+
+    /// <summary>
+    /// Adds the set template-content fields to a request body, leaving unset ones out so the
+    /// API keeps (or defaults) their values.
+    /// </summary>
+    private static void AddContent(
+        Dictionary<string, object?> body, object? template, object? data, object? translations, string? defaultLanguage)
+    {
+        if (template is not null)
+            body["template"] = ToJsonObject(template, nameof(template));
+        if (data is not null)
+            body["data"] = ToJsonObject(data, nameof(data));
+        if (translations is not null)
+            body["translations"] = ToJsonObject(translations, nameof(translations));
+        if (defaultLanguage is not null)
+            body["defaultLanguage"] = defaultLanguage;
+    }
+
+    /// <summary>
+    /// Converts a caller-supplied content argument into a JSON object. The API takes real
+    /// objects, not strings containing JSON, so a JSON string is parsed first and anything
+    /// that is not an object is rejected client-side with a clear message.
+    /// </summary>
+    private static JsonElement ToJsonObject(object value, string paramName)
+    {
+        JsonElement element;
+        try
+        {
+            element = ToPayload(value);
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException($"'{paramName}' is not valid JSON.", paramName, ex);
+        }
+        return element.ValueKind == JsonValueKind.Object
+            ? element
+            : throw new ArgumentException(
+                $"'{paramName}' must be a JSON object, not {element.ValueKind}.", paramName);
+    }
 
     /// <summary>
     /// A JSON array payload is a batch (one document per element); anything else is a

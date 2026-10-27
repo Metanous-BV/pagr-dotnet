@@ -67,6 +67,30 @@ public sealed class TemplateVersion
     [JsonPropertyName("translations")]
     public string? Translations { get; init; }
 
+    /// <summary>
+    /// The language the version's authored text is written in, as a culture name in canonical
+    /// casing (e.g. <c>"nl"</c> or <c>"nl-BE"</c>).
+    /// </summary>
+    /// <remarks>
+    /// <see langword="null"/> on drafts that have not been given one and on versions published
+    /// before the field existed; treat it as "unknown". A render that names no language renders
+    /// in this one. Set it with <c>UpdateDefaultLanguageAsync</c>.
+    /// </remarks>
+    [JsonPropertyName("defaultLanguage")]
+    public string? DefaultLanguage { get; init; }
+
+    /// <summary>
+    /// Every language this version can be rendered in — the valid values for a render's
+    /// <c>language</c> argument.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DefaultLanguage"/> comes first, then each translated language in document
+    /// order, each listed once. Empty only when the version has neither a default language nor
+    /// translations. Matching is exact and case-sensitive.
+    /// </remarks>
+    [JsonPropertyName("availableLanguages")]
+    public IReadOnlyList<string> AvailableLanguages { get; init; } = [];
+
     /// <inheritdoc/>
     public override string ToString() => $"v{VersionNumber} ({Id})";
 }

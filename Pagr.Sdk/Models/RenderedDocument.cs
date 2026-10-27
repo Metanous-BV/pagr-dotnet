@@ -65,11 +65,12 @@ public sealed class RenderedDocument
     public string? DocumentBase64 { get; init; }
 
     /// <summary>
-    /// The language variant the document was rendered in, for templates with translations.
+    /// The language the document was actually rendered in.
     /// </summary>
     /// <remarks>
-    /// <see langword="null"/> when the template has no translations or the render did not
-    /// specify one.
+    /// When the render named no language this is the version's
+    /// <see cref="TemplateVersion.DefaultLanguage"/>; it is <see langword="null"/> only when the
+    /// render named none and the version has no default language.
     /// </remarks>
     [JsonPropertyName("language")]
     public string? Language { get; init; }

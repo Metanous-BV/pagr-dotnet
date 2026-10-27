@@ -44,6 +44,47 @@ public class ModelsTests
         Assert.Equal(RenderIssueSeverity.Error, bare.Severity);
     }
 
+    // ── TemplateVersion ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TemplateVersion_ReadsDefaultLanguageAndAvailableLanguages()
+    {
+        var version = JsonSerializer.Deserialize<TemplateVersion>(
+            """
+            {"versionNumber": 3, "translations": "{\"fr\":{},\"en\":{}}",
+             "defaultLanguage": "nl", "availableLanguages": ["nl", "fr", "en"]}
+            """, PagrJson.Options)!;
+
+        Assert.Equal("nl", version.DefaultLanguage);
+        Assert.Equal(["nl", "fr", "en"], version.AvailableLanguages);
+    }
+
+    [Fact]
+    public void TemplateVersion_DefaultLanguageOnly_IsTheSingleAvailableLanguage()
+    {
+        // A template written in Dutch with no translations can still be rendered in Dutch.
+        var version = JsonSerializer.Deserialize<TemplateVersion>(
+            """{"versionNumber": 1, "translations": null, "defaultLanguage": "nl", "availableLanguages": ["nl"]}""",
+            PagrJson.Options)!;
+
+        Assert.Null(version.Translations);
+        Assert.Equal(["nl"], version.AvailableLanguages);
+    }
+
+    [Fact]
+    public void TemplateVersion_NullOrMissingLanguages_DefaultSafely()
+    {
+        var withNull = JsonSerializer.Deserialize<TemplateVersion>(
+            """{"versionNumber": 1, "defaultLanguage": null, "availableLanguages": []}""", PagrJson.Options)!;
+        Assert.Null(withNull.DefaultLanguage);
+        Assert.Empty(withNull.AvailableLanguages);
+
+        // Older API responses carry neither field.
+        var legacy = JsonSerializer.Deserialize<TemplateVersion>("""{"versionNumber": 1}""", PagrJson.Options)!;
+        Assert.Null(legacy.DefaultLanguage);
+        Assert.Empty(legacy.AvailableLanguages);
+    }
+
     // ── RenderResult ─────────────────────────────────────────────────────────────
 
     [Fact]

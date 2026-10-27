@@ -19,6 +19,14 @@ internal static class Filters
     private static readonly FilterOp[] OrdOps = [FilterOp.Eq, FilterOp.Gt, FilterOp.Gte, FilterOp.Lt, FilterOp.Lte]; // numbers and datetimes
     private static readonly FilterOp[] EnumOps = [FilterOp.Eq, FilterOp.Neq];                        // closed-vocabulary fields
 
+    /// <summary>Filters accepted by <c>GetProjectsAsync</c>. Unlike the other lists, its datetimes also take <c>neq</c>.</summary>
+    public static readonly IReadOnlyDictionary<string, FilterOp[]> ProjectFilters = new Dictionary<string, FilterOp[]>
+    {
+        ["name"] = StringOps,
+        ["createdAt"] = [.. OrdOps, FilterOp.Neq],
+        ["updatedAt"] = [.. OrdOps, FilterOp.Neq],
+    };
+
     /// <summary>Filters accepted by <c>GetTemplatesAsync</c> (both the org-wide and project-scoped overloads).</summary>
     public static readonly IReadOnlyDictionary<string, FilterOp[]> TemplateFilters = new Dictionary<string, FilterOp[]>
     {

@@ -1,6 +1,6 @@
 namespace Pagr.Sdk.Examples;
 
-/// <summary>Single render options: issues, language override, persist=false, JSON-string data.</summary>
+/// <summary>Single render options: issues, picking a language, persist=false, JSON-string data.</summary>
 internal static class RenderSingle
 {
     public static async Task RunAsync()
@@ -23,11 +23,19 @@ internal static class RenderSingle
         foreach (var issue in result.Issues)
             Console.WriteLine($"  [{issue.Severity}] {issue.Type}: {issue.Description}");
 
-        // Multilingual templates render a specific variant via `language`.
-        var dutch = await client.RenderAsync(
-            template.Id, version.SampleData, version: version.VersionNumber,
-            includeDocument: true, language: "nl");
-        Console.WriteLine($"Language override render ok: {dutch.Ok}");
+        // Without `language` a render uses the version's default language. AvailableLanguages
+        // lists every valid value (default first, then the translations), so pick from it.
+        Console.WriteLine(
+            $"Default language: {version.DefaultLanguage ?? "(unknown)"}; " +
+            $"available: {(version.AvailableLanguages.Count > 0 ? string.Join(", ", version.AvailableLanguages) : "(none)")}");
+        var translated = version.AvailableLanguages.FirstOrDefault(l => l != version.DefaultLanguage);
+        if (translated is not null)
+        {
+            var other = await client.RenderAsync(
+                template.Id, version.SampleData, version: version.VersionNumber,
+                includeDocument: true, language: translated);
+            Console.WriteLine($"Language override render ok: {other.Ok} (rendered in {other.Document?.Language})");
+        }
 
         // persist: false skips server-side storage; Id and ViewUrl come back null.
         var unstored = await client.RenderAsync(

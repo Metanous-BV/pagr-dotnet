@@ -159,7 +159,7 @@ RenderResult result = await client.RenderAsync(
     new { CustomerName = "Acme", Total = 42.50 },
     version: null,            // null (default) = latest published version; or an int
     includeDocument: true,    // return the PDF bytes inline (Base64)
-    language: null,           // language variant for multilingual templates
+    language: null,           // null = the version's default language; or one of its AvailableLanguages
     persist: true);           // store the render server-side
 
 if (result.Ok)
@@ -176,6 +176,26 @@ latest published version, or pass a number to pin a specific one.
   count, …) and download the bytes later via `DownloadDocumentAsync`.
 - A failed render is **not** an exception — inspect `result.Ok`, `result.Issues`, and
   `result.Status`. See [Working with results](#9-working-with-results-and-documents).
+
+### Picking a render language
+
+Omit `language` (or pass `null`) to render in the version's default language
+(`TemplateVersion.DefaultLanguage`): dates and numbers use that culture, the PDF `/Lang` tag
+is set, and `RenderedDocument.Language` records it. `TemplateVersion.AvailableLanguages` lists
+every valid value — the default language first, then each translated language — so check
+against it, not against `Translations`. Matching is exact and case-sensitive; the SDK passes
+the value through unchanged. Any other value is rejected by the API with HTTP 400.
+
+```csharp
+TemplateVersion version = await client.GetTemplateVersionAsync(templateId);
+
+string wanted = "fr";
+string? language = version.AvailableLanguages.Contains(wanted) ? wanted : null; // null → default
+
+RenderResult result = await client.RenderAsync(templateId, data, language: language);
+Console.WriteLine($"Rendered in {result.Document?.Language ?? "(no default language)"}; " +
+                  $"default is {version.DefaultLanguage ?? "unknown"}");
+```
 
 ### Batch (multiple documents in one request)
 
@@ -316,6 +336,10 @@ IReadOnlyList<RenderIssue> forDoc0 = validation.IssuesFor(0);   // includes batc
 ## 6. Templates and versions
 
 ```csharp
+// Projects group templates (paged; default order is name ascending). Read-only.
+PagedResult<Project> projects = await client.GetProjectsAsync();
+Guid projectId = projects[0].Id;
+
 // List templates (paged) — optionally scoped to a project
 PagedResult<Template> templates = await client.GetTemplatesAsync();
 PagedResult<Template> inProject = await client.GetTemplatesAsync(projectId);
@@ -337,6 +361,50 @@ TemplateVersion updated = await client.UpdateDocumentNameTemplateAsync(
 // A version's preview image URL, if any
 string? previewUrl = await client.GetPreviewImageUrlAsync(templateId, versionNumber: 1);
 ```
+
+### Creating and editing templates
+
+`CreateTemplateAsync` creates a template in a project — get its id from `GetProjectsAsync`
+(every organisation has at least one project); version 1 is a **draft**. The
+`template`, `data` and `translations` arguments are sent as JSON **objects** and accept a
+`JsonElement`, a `JsonNode`, a JSON string (parsed client-side), or any serialisable object.
+Anything left `null` gets the starter content. A value that is not a JSON object throws
+`ArgumentException` before any request is sent.
+
+```csharp
+PagedResult<Project> projects = await client.GetProjectsAsync(new ListOptions
+{
+    Filters = [new Filter("name", "Default")],
+});
+
+Template created = await client.CreateTemplateAsync(
+    projects[0].Id, "Invoice",
+    template: File.ReadAllText("invoice.template.json"),
+    data: new { invoiceNumber = "2026-001" },
+    translations: new { fr = new { title = "Facture" } },
+    defaultLanguage: "nl");
+
+// Edit version 1: only the arguments you set are sent; the rest keep their stored value.
+TemplateVersion v1 = await client.UpdateTemplateVersionAsync(
+    created.Id, versionNumber: 1,
+    translations: new { fr = new { title = "Facture" }, en = new { title = "Invoice" } });
+
+// Clear translations with an empty object.
+await client.UpdateTemplateVersionAsync(created.Id, 1, translations: new { });
+
+// Set (or, on a draft, clear with null) the default language. The API canonicalises it
+// (" NL-be " → "nl-BE"), so read it back from the result.
+v1 = await client.UpdateDefaultLanguageAsync(created.Id, 1, "nl-BE");
+Console.WriteLine(v1.DefaultLanguage); // nl-BE
+```
+
+- A version cannot be published without a default language. There is no publish endpoint:
+  publish in the Pagr editor.
+- `UpdateTemplateVersionAsync` is atomic and needs at least one argument. On a **published**
+  version `data` is refused, `template` must still bind against the published data, and the
+  default language can only be set while it is `null` — it cannot be changed afterwards
+  (duplicate the version instead). Refusals throw `PagrGenericApiException` (HTTP 400) with
+  the API error `Code`, e.g. `ValidationError` or `TemplateValidationFailed`.
 
 `TemplateVersion.TemplateJson` and `.Translations` are raw JSON **strings** (there is no typed
 model for the template DSL). `.SampleData` is the one free-form field the SDK parses for you:
@@ -441,7 +509,7 @@ if (result.Document is { HasContent: true } doc)
 
 ## 10. Paging, sorting, and filtering
 
-List endpoints (`GetTemplatesAsync`, `GetTemplateVersionsAsync`, `GetDocumentsAsync`) accept
+List endpoints (`GetProjectsAsync`, `GetTemplatesAsync`, `GetTemplateVersionsAsync`, `GetDocumentsAsync`) accept
 a `ListOptions` and return a `PagedResult<T>`:
 
 ```csharp
@@ -468,13 +536,15 @@ endpoint accepts:
 
 | Endpoint | Filterable fields |
 |---|---|
+| `GetProjectsAsync` | `name`, `createdAt`, `updatedAt` |
 | `GetTemplatesAsync` (both overloads) | `name`, `project.guid`, `createdAt`, `updatedAt` |
 | `GetTemplateVersionsAsync` | `versionNumber`, `publishedAt`, `createdAt`, `updatedAt` |
 | `GetDocumentsAsync` | `documentName`, `template.guid`, `versionNumber`, `fileSizeBytes`, `pageCount`, `renderedAt`, `createdAt`, `updatedAt`, `environment`, `language` |
 
 Operators are constrained per field too: id/guid fields take `Eq` only, text
 fields `Eq`/`Contains`, numeric and datetime fields `Eq`/`Gt`/`Gte`/`Lt`/`Lte`,
-and closed-vocabulary fields (`environment`, `language`) `Eq`/`Neq`. The
+and closed-vocabulary fields (`environment`, `language`) `Eq`/`Neq`. `GetProjectsAsync`'s
+datetime fields additionally accept `Neq`. The
 `ArgumentException` message names the allowed set for the field you got wrong.
 
 `PagedResult<T>` is enumerable/indexable over `Items`, and exposes `Total` (across all
@@ -789,6 +859,9 @@ Types live in `Pagr.Sdk.Models` unless noted. Timestamps are always `DateTimeOff
 the deadline `WaitForJobAsync` applies when you pass no `timeout`. Pass
 `Timeout.InfiniteTimeSpan` to poll without one; see [§13](#13-cancellation-timeouts-and-retries).
 
+### `Project`
+`Id`, `Name` (unique within the organisation), `Description?`, `CreatedAt`.
+
 ### `Template`
 `Id`, `Name`, `DocumentNameTemplate?`, `ProjectId?`, `ProjectName?`, `LatestVersionNumber?`,
 `VersionCount`, `UpdatedAt?`, `UpdatedBy?`, `MasterTemplateId?`, `MasterTemplateName?`.
@@ -796,7 +869,8 @@ the deadline `WaitForJobAsync` applies when you pass no `timeout`. Pass
 ### `TemplateVersion`
 `Id`, `VersionNumber`, `TemplateJson` (raw), `SampleData` (parsed `JsonElement`),
 `DocumentNameTemplate?`, `PublishedAt?`, `PublishedBy?`, `TemplateId`, `UpdatedAt?`,
-`Translations?` (raw).
+`Translations?` (raw), `DefaultLanguage?` (canonical culture name; `null` = unknown),
+`AvailableLanguages` (valid render languages, default language first).
 
 ### `RenderResult`
 `Ok`, `Document?`, `Status`, `InsufficientCredit`, `Issues`, `RenderedCount`,
@@ -815,7 +889,8 @@ the response), `InsufficientCredit`, `SaveAllAsync(directory, ct)`.
 `PageCount`, `RenderedAt`, `RenderDuration`, `ViewUrl?`, `DocumentType`, `DocumentBase64?`,
 `Language?`, `DocumentIndex?`, `HasContent`, `ToBytes()`, `SaveAsync(path, ct)`. `Id`/`ViewUrl`
 are `null` when the render was made with `persist: false` (nothing was stored). `Language?` is
-the language variant the document was rendered in, for templates with translations.
+the language the document was actually rendered in — the version's default language when the
+render named none; `null` only when the version has no default language either.
 
 ### `RenderDocument` (document-browsing model)
 As `RenderedDocument`, but `Id`/`ViewUrl` are non-nullable (only persisted renders are

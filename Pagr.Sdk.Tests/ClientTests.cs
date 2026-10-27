@@ -540,6 +540,69 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task GetProjects_NoOptions_SendsNoQuery_AndParsesPage()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(200, """
+            {"items": [{"id": "8a3c0000-0000-0000-0000-000000000001", "name": "Default",
+                        "description": null, "createdAt": "2026-01-12T09:30:00Z"}],
+             "total": 1, "skip": 0, "take": 25}
+            """);
+
+        using var client = NewClient(handler);
+        var page = await client.GetProjectsAsync();
+
+        Assert.Equal(HttpMethod.Get, handler.LastMethod);
+        Assert.Equal("/v1/projects", handler.LastPath);
+        Assert.Equal("", handler.LastQuery);
+        Assert.Equal(1, page.Total);
+        var project = Assert.Single(page);
+        Assert.Equal(Guid.Parse("8a3c0000-0000-0000-0000-000000000001"), project.Id);
+        Assert.Equal("Default", project.Name);
+        Assert.Null(project.Description);
+        Assert.Equal(new DateTimeOffset(2026, 1, 12, 9, 30, 0, TimeSpan.Zero), project.CreatedAt);
+    }
+
+    [Fact]
+    public async Task GetProjects_SerialisesListOptions()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(200, """{"items": [], "total": 0, "skip": 0, "take": 0}""");
+
+        using var client = NewClient(handler);
+        await client.GetProjectsAsync(new ListOptions
+        {
+            Skip = 5,
+            Take = 10,
+            SortBy = "createdAt",
+            SortDirection = SortDirection.Descending,
+            Search = "sales",
+            Filters =
+            [
+                new Filter("name", "Default"),
+                new Filter("createdAt", FilterOp.Neq, "2026-01-12"),
+            ],
+        });
+
+        Assert.Equal(
+            "?skip=5&take=10&sortBy=createdAt&sortDirection=desc&search=sales" +
+            "&filters[0].field=name&filters[0].op=eq&filters[0].value=Default" +
+            "&filters[1].field=createdAt&filters[1].op=neq&filters[1].value=2026-01-12",
+            handler.LastQuery);
+    }
+
+    [Fact]
+    public async Task GetProjects_UnknownFilterField_Throws()
+    {
+        var handler = new StubHttpMessageHandler();
+        using var client = NewClient(handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.GetProjectsAsync(
+            new ListOptions { Filters = [new Filter("description", FilterOp.Contains, "x")] }));
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
     public async Task GetTemplates_UnknownFilterField_Throws()
     {
         var handler = new StubHttpMessageHandler();
@@ -692,6 +755,151 @@ public class ClientTests
         await client.UpdateDocumentNameTemplateAsync(TemplateId, 1, null);
         body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
         Assert.Equal(JsonValueKind.Null, body.GetProperty("documentNameTemplate").ValueKind);
+    }
+
+    private const string VersionResponse = $$"""
+        {"id": "550e8400-e29b-41d4-a716-446655440000", "versionNumber": 1,
+         "templateJson": "{}", "sampleData": "{}", "defaultLanguage": "nl-BE",
+         "availableLanguages": ["nl-BE"], "templateId": "{{TestFixtures.TemplateId}}"}
+        """;
+
+    [Fact]
+    public async Task CreateTemplate_PostsContentAsJsonObjects()
+    {
+        var projectId = Guid.NewGuid();
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(201, $$"""
+            {"id": "{{TestFixtures.TemplateId}}", "name": "Invoice", "projectId": "{{projectId}}",
+             "latestVersionNumber": null, "versionCount": 1}
+            """);
+
+        using var client = NewClient(handler);
+        var template = await client.CreateTemplateAsync(
+            projectId, "Invoice",
+            template: """{"pageSize": "a4", "elements": []}""",            // JSON string → parsed
+            data: new { invoiceNumber = "2026-001" },                       // anonymous object
+            translations: new Dictionary<string, object> { ["fr"] = new { title = "Facture" } },
+            defaultLanguage: "nl");
+
+        Assert.Equal(HttpMethod.Post, handler.LastMethod);
+        Assert.Equal($"/v1/projects/{projectId}/templates", handler.LastPath);
+        Assert.Equal(TemplateId, template.Id);
+        Assert.Equal("Invoice", template.Name);
+        Assert.Equal(1, template.VersionCount);
+
+        var body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
+        Assert.Equal("Invoice", body.GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Object, body.GetProperty("template").ValueKind);
+        Assert.Equal("a4", body.GetProperty("template").GetProperty("pageSize").GetString());
+        Assert.Equal("2026-001", body.GetProperty("data").GetProperty("invoiceNumber").GetString());
+        Assert.Equal("Facture", body.GetProperty("translations").GetProperty("fr").GetProperty("title").GetString());
+        Assert.Equal("nl", body.GetProperty("defaultLanguage").GetString());
+        Assert.False(body.TryGetProperty("masterTemplateId", out _));
+    }
+
+    [Fact]
+    public async Task CreateTemplate_OmitsUnsetFields()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(201, $$"""{"id": "{{TestFixtures.TemplateId}}", "name": "Blank"}""");
+
+        using var client = NewClient(handler);
+        await client.CreateTemplateAsync(Guid.NewGuid(), "Blank");
+
+        var body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
+        Assert.Equal(["name"], body.EnumerateObject().Select(p => p.Name));
+    }
+
+    [Theory]
+    [InlineData("[1, 2]")]
+    [InlineData("\"just a string\"")]
+    [InlineData("not json")]
+    public async Task CreateTemplate_NonObjectContent_ThrowsBeforeSending(string template)
+    {
+        var handler = new StubHttpMessageHandler();
+        using var client = NewClient(handler);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => client.CreateTemplateAsync(Guid.NewGuid(), "Invoice", template: template));
+        Assert.Equal("template", ex.ParamName);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task UpdateTemplateVersion_SendsOnlySetFields()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(200, VersionResponse);
+
+        using var client = NewClient(handler);
+        var version = await client.UpdateTemplateVersionAsync(
+            TemplateId, 1, template: JsonDocument.Parse("""{"elements": []}""").RootElement);
+
+        Assert.Equal(HttpMethod.Patch, handler.LastMethod);
+        Assert.Equal($"/v1/templates/{TemplateId}/versions/1", handler.LastPath);
+        Assert.Equal("nl-BE", version.DefaultLanguage);
+        var body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
+        Assert.Equal(["template"], body.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(JsonValueKind.Object, body.GetProperty("template").ValueKind);
+    }
+
+    [Fact]
+    public async Task UpdateTemplateVersion_EmptyTranslations_SentAsEmptyObject()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(200, VersionResponse);
+
+        using var client = NewClient(handler);
+        await client.UpdateTemplateVersionAsync(TemplateId, 1, translations: new { });
+
+        var body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
+        Assert.Equal("{}", body.GetProperty("translations").GetRawText());
+    }
+
+    [Fact]
+    public async Task UpdateTemplateVersion_NothingSet_ThrowsBeforeSending()
+    {
+        var handler = new StubHttpMessageHandler();
+        using var client = NewClient(handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.UpdateTemplateVersionAsync(TemplateId, 1));
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task UpdateTemplateVersion_Refused_SurfacesApiError()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(400, """{"error": {"code": "ValidationError", "message": "'data' cannot be changed on a published version."}}""");
+
+        using var client = NewClient(handler);
+        var ex = await Assert.ThrowsAsync<PagrGenericApiException>(
+            () => client.UpdateTemplateVersionAsync(TemplateId, 1, data: new { a = 1 }));
+
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Equal("ValidationError", ex.Code);
+        Assert.Contains("published version", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateDefaultLanguage_SendsValue_AndReturnsCanonicalValue()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Respond(200, VersionResponse);
+
+        using var client = NewClient(handler);
+        var version = await client.UpdateDefaultLanguageAsync(TemplateId, 1, " NL-be ");
+
+        Assert.Equal(HttpMethod.Patch, handler.LastMethod);
+        Assert.Equal($"/v1/templates/{TemplateId}/versions/1/default-language", handler.LastPath);
+        var body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
+        Assert.Equal(" NL-be ", body.GetProperty("defaultLanguage").GetString());   // sent as given
+        Assert.Equal("nl-BE", version.DefaultLanguage);                             // read back canonical
+
+        // null clears: the key must still be sent, with a JSON null.
+        await client.UpdateDefaultLanguageAsync(TemplateId, 1, null);
+        body = JsonSerializer.Deserialize<JsonElement>(handler.LastRequestBody!);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("defaultLanguage").ValueKind);
     }
 
     [Fact]

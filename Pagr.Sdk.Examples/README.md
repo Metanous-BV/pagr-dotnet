@@ -7,7 +7,8 @@ you need them.
 |---|---|
 | [`GettingStarted.cs`](GettingStarted.cs) | Connect, pick a template, render a document, save the PDF. |
 | [`Templates.cs`](Templates.cs) | Browse templates and versions: paging, search, filters, document-name template, preview image. |
-| [`RenderSingle.cs`](RenderSingle.cs) | Single render options: issues, language override, `persist: false`, JSON-string data. |
+| [`TemplateAuthoring.cs`](TemplateAuthoring.cs) | Pick a project with `GetProjectsAsync`, create a template with content, edit a draft version, set its default language. Creates a new template on each run. |
+| [`RenderSingle.cs`](RenderSingle.cs) | Single render options: issues, picking a language from `AvailableLanguages`, `persist: false`, JSON-string data. |
 | [`RenderBatch.cs`](RenderBatch.cs) | Synchronous batch render: succeeded/failed items, `SaveAllAsync`. |
 | [`BatchAsync.cs`](BatchAsync.cs) | Fire-and-forget batch render with webhook callbacks, plus job status polling. |
 | [`Validate.cs`](Validate.cs) | Data validation: severity levels, per-document issues, test vs. production keys. |
